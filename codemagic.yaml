@@ -1,87 +1,21 @@
-# codemagic.yaml - Complete version with Android + iOS IPA
 workflows:
-  weather-app-complete:
-    name: Weather App - iOS IPA + Android APK
-    max_build_duration: 45
-    instance_type: mac_mini_m1
-
+  weather-app-build:
+    name: Weather App Build
     environment:
       flutter: stable
-      xcode: latest
-      cocoapods: default
-
-    triggering:
-      events:
-        - push
-        - pull_request
-      branch_patterns:
-        - pattern: master
-          include: true
-          source: true
-      cancel_previous_builds: true
-
     scripts:
-      - name: Get dependencies
-        script: |
-          flutter packages pub get
-
-      # ANDROID BUILD
-      - name: Build Android APK
-        script: |
-          flutter build apk --release
-          echo "✅ Android APK built"
-
-      # iOS BUILD (for Sideloadly)
-      - name: Build iOS for Device (no code signing)
-        script: |
-          flutter build ios --release --no-codesign
-          echo "✅ iOS app built"
-
-      - name: Create iOS IPA for Sideloadly
-        script: |
-          # Create IPA for Sideloadly
-          cd build/ios/iphoneos
-          mkdir -p Payload
-          cp -r Runner.app Payload/
-          zip -r ../../WeatherApp_Sideloadly.ipa Payload/
-          
-          # Also create simulator version (optional)
-          cd ../iphonesimulator
-          if [ -d "Runner.app" ]; then
-            mkdir -p Payload
-            cp -r Runner.app Payload/
-            zip -r ../../WeatherApp_Simulator.ipa Payload/
-          fi
-          
-          echo "✅ IPA files created"
-
-      - name: List all artifacts
-        script: |
-          echo "=== ALL BUILT FILES ==="
-          ls -la build/
-          echo ""
-          echo "=== IPA FILE ==="
-          ls -la build/*.ipa || echo "No IPA found"
-          echo ""
-          echo "=== APK FILE ==="
-          ls -la build/app/outputs/flutter-apk/*.apk || echo "No APK found"
-
+      - flutter packages pub get
+      - flutter build apk --release
+      - flutter build ios --release --no-codesign
+      - |
+        cd build/ios/iphoneos
+        mkdir -p Payload
+        cp -r Runner.app Payload/
+        zip -r ../../WeatherApp.ipa Payload/
     artifacts:
-      # iOS IPA for Sideloadly
-      - build/WeatherApp_Sideloadly.ipa
-
-      # Android APK
-      - build/app/outputs/flutter-apk/app-release.apk
-      - build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-      - build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-
-      # Debug files (optional)
-      - build/ios/iphoneos/**/*.app
-
+      - build/**/*.apk
+      - build/**/*.ipa
     publishing:
       email:
         recipients:
-          - your-email@gmail.com  # CHANGE THIS
-        notify:
-          success: true
-          failure: true
+          - your-email@gmail.com
