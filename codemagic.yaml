@@ -1,21 +1,74 @@
 workflows:
   weather-app-build:
     name: Weather App Build
+    max_build_duration: 30
+    instance_type: mac_mini_m1
+
     environment:
       flutter: stable
+      xcode: latest
+      cocoapods: default
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: master
+          include: true
+          source: true
+      cancel_previous_builds: true
+
     scripts:
-      - flutter packages pub get
-      - flutter build apk --release
-      - flutter build ios --release --no-codesign
-      - |
-        cd build/ios/iphoneos
-        mkdir -p Payload
-        cp -r Runner.app Payload/
-        zip -r ../../WeatherApp.ipa Payload/
+      - name: Clean and get dependencies
+        script: |
+          flutter clean
+          flutter pub get
+
+      - name: Build Android APK
+        script: |
+          flutter build apk --release
+          echo "✅ Android APK built successfully"
+
+      - name: Build iOS for Sideloadly (IPA)
+        script: |
+          # Build iOS without code signing
+          flutter build ios --release --no-codesign
+          echo "✅ iOS app built successfully"
+          
+          # Create IPA file for Sideloadly
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -r ../../weather_app.ipa Payload/
+          cd ../..
+          echo "✅ IPA file created: weather_app.ipa"
+
+      - name: List all generated files
+        script: |
+          echo "=== GENERATED FILES ==="
+          echo "Android APK:"
+          ls -la build/app/outputs/flutter-apk/ || echo "No APK found"
+          echo ""
+          echo "iOS IPA:"
+          ls -la build/*.ipa || echo "No IPA found"
+
     artifacts:
-      - build/**/*.apk
-      - build/**/*.ipa
+      # Android APKs
+      - build/app/outputs/flutter-apk/app-release.apk
+      - build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+      - build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+      - build/app/outputs/flutter-apk/app-x86_64-release.apk
+
+      # iOS IPA for Sideloadly
+      - build/weather_app.ipa
+
+      # Debug files (optional)
+      - build/ios/iphoneos/**/*.app
+
     publishing:
       email:
         recipients:
-          - your-email@gmail.com
+          - your-email@gmail.com  # CHANGE THIS TO YOUR EMAIL
+        notify:
+          success: true
+          failure: true
