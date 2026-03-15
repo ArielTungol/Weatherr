@@ -1,0 +1,110 @@
+# Advanced codemagic.yaml
+workflows:
+  weather-app-production:
+    name: Weather App Production
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+
+    environment:
+      groups:
+        - app_store_credentials
+        - firebase_credentials
+      vars:
+        FCI_KEYSTORE_PATH: /tmp/keystore.keystore
+        FCI_KEYSTORE: Encrypted(...)
+        FCI_KEY_PASSWORD: Encrypted(...)
+        FCI_KEY_ALIAS: Encrypted(...)
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+
+    triggering:
+      events:
+        - push
+        - tag
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+        - pattern: develop
+          include: true
+          source: true
+      cancel_previous_builds: true
+
+    scripts:
+      - name: Decode keystore
+        script: |
+          echo $FCI_KEYSTORE | base64 --decode > $FCI_KEYSTORE_PATH
+
+      - name: Set up code signing files
+        script: |
+          keychain initialize
+
+      - name: Get dependencies
+        script: |
+          flutter packages pub get
+
+      - name: Run unit tests
+        script: |
+          flutter test --coverage
+
+      - name: Build APK
+        script: |
+          flutter build apk --release
+
+      - name: Build AAB
+        script: |
+          flutter build appbundle --release
+
+      - name: Build iOS
+        script: |
+          flutter build ios --release --no-codesign
+
+      - name: Build web
+        script: |
+          flutter build web --release
+
+    artifacts:
+      - build/**/outputs/**/*.apk
+      - build/**/outputs/**/*.aab
+      - build/ios/iphoneos/**/*.ipa
+      - build/web/**
+      - coverage/lcov.info
+
+    publishing:
+      email:
+        recipients:
+          - developer@example.com
+          - team@example.com
+        notify:
+          success: true
+          failure: true
+
+      slack:
+        channel: '#build-notifications'
+        webhook_url: 'https://hooks.slack.com/services/...'
+        notify_on_build_start: true
+        notify:
+          success: true
+          failure: true
+
+      firebase:
+        firebase_token: $FIREBASE_TOKEN
+        android:
+          app_id: 1:123456789:android:abc123def456
+          groups:
+            - testers
+            - developers
+        ios:
+          app_id: 1:123456789:ios:abc123def456
+          groups:
+            - testers
+
+      app_store_connect:
+        apple_id: your-apple-id@example.com
+        password: $APP_STORE_PASSWORD
+        issuer_id: $APP_STORE_ISSUER_ID
+        key_id: $APP_STORE_KEY_ID
+        private_key: $APP_STORE_PRIVATE_KEY
+        submit_to_testflight: true
+        submit_to_app_store: false
