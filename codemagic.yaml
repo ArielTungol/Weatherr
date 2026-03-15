@@ -1,9 +1,10 @@
+# codemagic.yaml - Generates .ipa file for Sideloadly
 workflows:
-  weather-app-build:
-    name: Weather App Build
+  ios-ipa-workflow:
+    name: iOS IPA for Sideloadly
     max_build_duration: 30
     instance_type: mac_mini_m1
-
+    
     environment:
       flutter: stable
       xcode: latest
@@ -18,24 +19,48 @@ workflows:
           source: true
 
     scripts:
-      - name: Get dependencies
-        script: flutter packages pub get
+      - name: Get Flutter dependencies
+        script: |
+          flutter packages pub get
 
-      - name: Build Android APK
-        script: flutter build apk --release
+      - name: Clean build (optional)
+        script: |
+          flutter clean
 
-      - name: Build iOS
-        script: flutter build ios --release --no-codesign
+      - name: Build iOS for Simulator/Development (no code signing)
+        script: |
+          # Build for simulator (this creates .app without code signing)
+          flutter build ios --simulator
 
-      - name: Build Web
-        script: flutter build web --release
+      - name: Create .ipa file for Sideloadly
+        script: |
+          # Navigate to the build output
+          cd build/ios/iphonesimulator
+          
+          # Create Payload folder
+          mkdir -p Payload
+          
+          # Copy the .app to Payload folder
+          cp -r Runner.app Payload/
+          
+          # Create the .ipa file (just a zip renamed)
+          zip -r ../../WeatherApp.ipa Payload/
+
+      - name: List files to verify
+        script: |
+          echo "=== Build Directory Contents ==="
+          ls -la build/
+          echo "=== IPA Location ==="
+          ls -la build/WeatherApp.ipa || echo "IPA not found in build folder"
 
     artifacts:
-      - build/app/outputs/flutter-apk/*.apk
-      - build/ios/iphoneos/Runner.app
-      - build/web/**
+      - build/WeatherApp.ipa
+      - build/ios/iphonesimulator/**/*.app
 
     publishing:
       email:
         recipients:
-          - your-email@gmail.com
+          - your-email@gmail.com  # CHANGE THIS TO YOUR EMAIL
+        notify:
+          success: true
+          failure: true
