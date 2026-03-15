@@ -1,13 +1,18 @@
 workflows:
   weather-app-build:
-    name: Weather App Build
-    max_build_duration: 30
+    name: Weather App - Free iOS Build
+    max_build_duration: 120
     instance_type: mac_mini_m2
 
     environment:
       flutter: stable
       xcode: latest
       cocoapods: default
+
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+        - $FCI_BUILD_DIR/ios/Pods
 
     triggering:
       events:
@@ -19,57 +24,137 @@ workflows:
       cancel_previous_builds: true
 
     scripts:
-      - name: Clean and Get Dependencies
+      - name: Setup Dependencies
         script: |
-          echo "🧹 Cleaning project..."
-          flutter clean
-          echo "📦 Getting dependencies..."
+          echo "📦 Setting up dependencies..."
           flutter pub get
+          flutter precache --ios
           echo "✅ Dependencies installed"
 
-      - name: Build Android APK
+      - name: Clean and Prepare iOS
+        script: |
+          echo "🧹 Cleaning iOS folder..."
+          cd ios
+          
+          # Clean everything for fresh install
+          rm -rf Pods
+          rm -rf Podfile.lock
+          rm -rf Runner.xcworkspace
+          rm -rf .symlinks
+          
+          echo "✅ iOS cleaned"
+          cd ..
+
+      - name: Configure Podfile for Geolocator
+        script: |
+          echo "⚙️ Configuring Podfile with location permissions..."
+          cd ios
+          
+          # Create Podfile with proper configuration for geolocator
+          cat > Podfile << 'EOL'
+          # Uncomment this line to define a global platform for your project
+          platform :ios, '12.0'
+
+          # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
+          ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+          project 'Runner', {
+            'Debug' => :debug,
+            'Profile' => :release,
+            'Release' => :release,
+          }
+
+          def flutter_root
+            generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+            unless File.exist?(generated_xcode_build_settings_path)
+              raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+            end
+
+            File.foreach(generated_xcode_build_settings_path) do |line|
+              matches = line.match(/FLUTTER_ROOT\=(.*)/)
+              return matches[1].strip if matches
+            end
+            raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+          end
+
+          require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+          flutter_ios_podfile_setup
+
+          target 'Runner' do
+            use_frameworks!
+            use_modular_headers!
+
+            flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+          end
+
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              flutter_additional_ios_build_settings(target)
+          
+              # Add location permissions for geolocator
+              target.build_configurations.each do |config|
+                config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
+                  '$(inherited)',
+                  'PERMISSION_LOCATION=1',
+                ]
+          
+                # Set minimum iOS version
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '12.0'
+              end
+            end
+          end
+          EOL
+          
+          echo "✅ Podfile configured"
+          cd ..
+
+      - name: Install CocoaPods
+        script: |
+          echo "📱 Installing CocoaPods..."
+          cd ios
+          pod install --repo-update
+          cd ..
+          echo "✅ CocoaPods installed"
+
+      - name: Build Android APK (Optional)
         script: |
           echo "🤖 Building Android APK..."
           flutter build apk --release
-          echo "✅ Android APK built successfully"
+          echo "✅ Android APK built: app-release.apk"
 
-      - name: Build iOS App
+      - name: Build and Package iOS IPA
         script: |
           echo "🍎 Building iOS app (no code signing)..."
+          
+          # Build the iOS app
           flutter build ios --release --no-codesign
           
-          # Check if build succeeded
+          # Check if build succeeded with better error handling
           if [ -d "build/ios/iphoneos/Runner.app" ]; then
-            echo "✅ iOS build successful!"
+            echo "✅ Build successful! Creating IPA..."
+          
+            # Navigate to the output directory
+            cd build/ios/iphoneos
+          
+            # Create Payload directory and package the app
+            mkdir -p Payload
+            cp -r Runner.app Payload/
+          
+            # Create IPA with proper naming
+            zip -r $FCI_BUILD_DIR/unsigned_app.ipa Payload/
+            cd ../..
+          
+            echo "✅ IPA created successfully at: $FCI_BUILD_DIR/unsigned_app.ipa"
+          
+            # Show file size
+            echo "📊 IPA size: $(du -sh $FCI_BUILD_DIR/unsigned_app.ipa | cut -f1)"
           else
-            echo "❌ Error: iOS build failed"
+            echo "❌ Error: Runner.app not found. Build failed."
+            echo "Debug: Listing contents of build/ios/iphoneos:"
             ls -la build/ios/iphoneos/ || true
-            exit 1
-          fi
-
-      - name: Create unsigned_app.ipa for Sideloadly
-        script: |
-          echo "📦 Creating IPA file for Sideloadly..."
-          
-          # Navigate to iOS build folder
-          cd build/ios/iphoneos
-          
-          # Create Payload folder and copy app
-          mkdir -p Payload
-          cp -r Runner.app Payload/
-          
-          # Create the IPA file
-          zip -r ../../unsigned_app.ipa Payload/
-          
-          # Go back to root
-          cd ../..
-          
-          # Verify IPA was created
-          if [ -f "unsigned_app.ipa" ]; then
-            echo "✅ unsigned_app.ipa created successfully!"
-            echo "📊 File size: $(du -sh unsigned_app.ipa | cut -f1)"
-          else
-            echo "❌ Failed to create IPA"
+            echo "Debug: Listing contents of build/ios:"
+            ls -la build/ios/ || true
             exit 1
           fi
 
@@ -82,8 +167,8 @@ workflows:
           echo ""
           
           echo "📱 iOS IPA for Sideloadly:"
-          if [ -f "unsigned_app.ipa" ]; then
-            echo "   ✅ unsigned_app.ipa - $(du -sh unsigned_app.ipa | cut -f1)"
+          if [ -f "$FCI_BUILD_DIR/unsigned_app.ipa" ]; then
+            echo "   ✅ unsigned_app.ipa - $(du -sh $FCI_BUILD_DIR/unsigned_app.ipa | cut -f1)"
           else
             echo "   ❌ IPA not found"
           fi
@@ -98,17 +183,20 @@ workflows:
           echo ""
           
           echo "==================================="
-          echo "✅ Build completed successfully!"
+          echo "✅ Build completed!"
           echo "==================================="
 
     artifacts:
       # iOS IPA for Sideloadly
       - unsigned_app.ipa
 
-      # Android APK
+      # Android APKs (optional)
       - build/app/outputs/flutter-apk/app-release.apk
       - build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
       - build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+
+      # Debug files
+      - build/ios/iphoneos/Runner.app
 
     publishing:
       email:
